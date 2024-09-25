@@ -1,0 +1,10 @@
+{
+    "en": {
+        "success": ["welcome", "dashboard", "profile", "logged in", "successful"],
+        "failure": ["invalid", "incorrect", "failed", "error", "try again"]
+    },
+    "tr": {
+        "success": ["hosgeldiniz", "kontrol paneli", "profil", "giriş yapıldı", "başarılı"],
+        "failure": ["geçersiz", "yanlış", "başarısız", "hata", "tekrar deneyin"]
+    }
+}
