@@ -50,3 +50,10 @@ By using a combination of these methods—redirect detection, session cookies, k
 
 ## Multi-Language Support in Page Content Check
 When checking the page content, it is checked in English by default. However, you can edit this with parameters. You can also add different languages and keywords by editing the `languages.json` file. Currently English and Turkish are defined.
+Languages.json format:
+```
+    "en": { # Language defination
+        "success": ["welcome", "dashboard", "profile", "logged in", "successful"], # Success keywords defination
+        "failure": ["invalid", "incorrect", "failed", "error", "try again"] # Failure keywords defination
+    }
+```
