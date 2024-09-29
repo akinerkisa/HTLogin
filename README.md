@@ -1,6 +1,9 @@
 # HowToLogin
 HowToLogin is a tool that tests web application login pages for login bypass. HTLogin tests for various login bypass payloads, common default credentials and rate limits on the login forms in the given url and presents it to the user.
 
+> [!NOTE]
+> You can try this tool with https://github.com/akinerkisa/renikApp login bypass page section.
+
 ## Installation
 <code>git clone https://github.com/akinerkisa/HTLogin</code>
 <p><code>cd HTLogin</code></p>
