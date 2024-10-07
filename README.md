@@ -14,13 +14,21 @@ HowToLogin is a tool that tests web application login pages for login bypass. HT
 
 Flag | Short | Description | Example | Default | Required
 --- | --- | --- | --- | --- | --- |
---url	| -u | Specify URL | python3 htlogin.py -u https://www.example.com/login | N/A | Yes |
+--url	| -u | Specify URL | python3 htlogin.py -u https://www.example.com/login | N/A | Yes(One of them -u or -l) |
+--list | -l | Specify URL List | python3 htlogin.py -l list.txt | N/A | Yes(One of them -u or -l) |
 --credential-list | -cl | Specify default credentials path for test | python3 htlogin.py -cl credentials.txt | Defined in the program | No |
 --rate-limit | -r | Specify rate limit test request amount. | python3 htlogin.py -r 1337 | 300 | No |
 --verbose | -v | Toggles showing all Valid/Invalid results | python3 htlogin.py -v on/off | off | No |
---language | -l | Language code for keyword detection | python3 htlogin.py -l tr | en | No |
+--language | -lang | Language code for keyword detection | python3 htlogin.py -lang tr | en | No |
+--output | -o | Specify output file | python3 htlogin.py -o output.txt | output.txt | No |
 
-
+## List File Example Format
+```
+http://127.0.0.1:5000/lp/insecure-login
+http://127.0.0.1:5000/lp/secure-login
+http://127.0.0.1:5000/lp/default-login
+http://127.0.0.1:5000/lp/rate-limit-login
+```
 ## Features
 <li> SQL Injection login bypass testing
 <li> NoSQL Injection login bypass testing
@@ -29,6 +37,7 @@ Flag | Short | Description | Example | Default | Required
 <li> Default Credentials testing
 <li> Rate limit testing
 <li> Multi-lang support for keyword check
+<li> Url list support
   
 ## How HTLogin Extracts Successful Login Attempts
 
@@ -60,3 +69,6 @@ Languages.json format:
         "failure": ["invalid", "incorrect", "failed", "error", "try again"] # Failure keywords defination
     }
 ```
+
+## Example Output
+![Output.](https://github.com/akinerkisa/HTLogin/blob/main/output.png)
