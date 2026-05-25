@@ -86,8 +86,6 @@ class UsernameEnumerationTester:
 
         vulnerable_username = None
         enumeration_details = {}
-        invalid_user_response_text = None
-        invalid_user_status_code = None
 
         for username in test_usernames[:5]:
             test_password = "test_password_123"
