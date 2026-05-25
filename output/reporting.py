@@ -79,12 +79,22 @@ class ReportGenerator:
                         rl_is_vulnerable = status_lower.startswith("no rate limit")
 
                     if rl_is_vulnerable:
+                        rl_confidence_level = test_result.get("confidence_level") or rl_details.get("confidence") or "Unknown"
+                        rl_confidence_score = test_result.get("confidence_score")
+                        if rl_confidence_score is None:
+                            rl_confidence_score = rl_details.get("confidence_score")
+                        if rl_confidence_score is None:
+                            rl_confidence_score = {
+                                "high": 80,
+                                "medium": 70,
+                                "low": 40,
+                            }.get(str(rl_confidence_level).lower(), 0)
                         vulnerability = {
                             "type": test_name,
                             "finding_type": "rate_limit_missing_or_weak",
                             "severity": "Medium",
-                            "confidence": test_result.get("confidence_level", "Unknown"),
-                            "confidence_score": test_result.get("confidence_score", 0),
+                            "confidence": rl_confidence_level,
+                            "confidence_score": rl_confidence_score,
                             "payload": None,
                             "indicators": [],
                             "manual_verification_recommended": False,
