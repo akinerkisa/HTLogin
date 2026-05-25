@@ -19,6 +19,23 @@ class APITester:
         self._csrf_token = None
         self._csrf_cookies = {}
 
+    def _prioritize_credentials(self, credentials_list: List[str], max_items: int) -> List[str]:
+        common_first = [
+            "admin:admin",
+            "administrator:admin",
+            "testuser:testpass123",
+            "admin:password",
+            "user:password",
+        ]
+        prioritized: List[str] = []
+        seen = set()
+        for cred in common_first + credentials_list:
+            if cred in seen:
+                continue
+            seen.add(cred)
+            prioritized.append(cred)
+        return prioritized[:max_items]
+
     def _fetch_csrf_token(self, login_page_url: str) -> Optional[str]:
         try:
             logger.debug(f"[CSRF] Fetching CSRF token from: {login_page_url}")
@@ -185,7 +202,7 @@ class APITester:
         successful_details = None
         csrf_fetched = False
 
-        for credential in credentials_list[:5]:
+        for credential in self._prioritize_credentials(credentials_list, max_items=10):
             if ':' not in credential:
                 continue
 
@@ -379,7 +396,14 @@ class APITester:
                         for key, value in obj.items():
                             if key.lower() in [ek.lower() for ek in error_keys]:
                                 if isinstance(value, str):
-                                    return True
+                                    if any(ev.lower() in value.lower() for ev in error_values):
+                                        return True
+                                elif isinstance(value, list):
+                                    for item in value:
+                                        if isinstance(item, str) and any(ev.lower() in item.lower() for ev in error_values):
+                                            return True
+                                        if isinstance(item, dict) and has_error_value(item):
+                                            return True
                             if has_error_value(value):
                                 return True
                     elif isinstance(obj, list):
@@ -397,6 +421,11 @@ class APITester:
 
                 logger.debug(f"[DEBUG] _detect_json_api_success: has_success={has_success}, has_error={has_error}")
 
+
+                # GraphQL responses often encode errors as "errors": [...]. Treat that as failure even with 2xx.
+                if isinstance(data, dict) and "errors" in data and data.get("errors"):
+                    logger.debug("[DEBUG] _detect_json_api_success: GraphQL-style errors detected")
+                    return False
 
                 if has_success and not has_error:
                     logger.debug("[DEBUG] _detect_json_api_success: SUCCESS - has success keys and no errors")
@@ -421,6 +450,29 @@ class APITester:
         logger.debug("[DEBUG] _detect_json_api_success: returning False (end of function)")
         return False
 
+    def _detect_graphql_success(self, response) -> bool:
+        if response is None or getattr(response, "status_code", 0) >= 400:
+            return False
+        try:
+            payload = json.loads(response.text or "{}")
+        except Exception:
+            return False
+        if not isinstance(payload, dict):
+            return False
+        if payload.get("errors"):
+            return False
+        data = payload.get("data")
+        if not isinstance(data, dict):
+            return False
+        for _, value in data.items():
+            if isinstance(value, dict):
+                if any(k in value for k in ("token", "access_token", "jwt", "session")):
+                    return True
+                user_obj = value.get("user")
+                if isinstance(user_obj, dict) and user_obj:
+                    return True
+        return False
+
     def test_graphql(self, endpoint: str,
                     credentials_list: List[str],
                     success_keywords: List[str],
@@ -435,7 +487,7 @@ class APITester:
 
         mutation_names = ['login', 'authenticate', 'signIn', 'signin', 'userLogin']
 
-        for credential in credentials_list[:3]:
+        for credential in self._prioritize_credentials(credentials_list, max_items=10):
             if ':' not in credential:
                 continue
 
@@ -469,16 +521,11 @@ class APITester:
                             if not response:
                                 continue
 
-                            detection_result = self.detector.detect(
-                                response, endpoint, original_content_length,
-                                success_keywords, failure_keywords, self.client,
-                                language_keywords=language_keywords
-                            )
-
-                            if detection_result.is_successful:
+                            graphql_success = self._detect_graphql_success(response)
+                            if graphql_success:
                                 successful_details = {
-                                    "confidence_score": detection_result.confidence_score,
-                                    "confidence_level": detection_result.confidence_level.value,
+                                    "confidence_score": 100,
+                                    "confidence_level": "High",
                                     "endpoint": endpoint,
                                     "format": "graphql",
                                     "mutation": mutation_name

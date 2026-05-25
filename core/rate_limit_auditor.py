@@ -156,9 +156,13 @@ class RateLimitAuditor:
                     exception_count += 1
                 return seq, None
 
-        with ThreadPoolExecutor(max_workers=self.concurrency) as executor:
+        # Send one extra request for boundary-sensitive implementations that block at N+1.
+        total_planned_requests = self.max_requests + 1
+        effective_workers = min(self.concurrency, total_planned_requests)
+
+        with ThreadPoolExecutor(max_workers=effective_workers) as executor:
             futures = [
-                executor.submit(_worker, i + 1) for i in range(self.max_requests)
+                executor.submit(_worker, i + 1) for i in range(total_planned_requests)
             ]
             for future in as_completed(futures):
                 try:
@@ -202,9 +206,9 @@ class RateLimitAuditor:
                 confidence = "Low"
         else:
             is_vulnerable = True
-            if total_sent >= self.max_requests:
+            if total_sent >= total_planned_requests:
                 confidence = "High"
-            elif total_sent >= self.max_requests // 2:
+            elif total_sent >= total_planned_requests // 2:
                 confidence = "Medium"
             else:
                 confidence = "Low"

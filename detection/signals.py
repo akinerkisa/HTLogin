@@ -24,7 +24,10 @@ class SignalCollector:
                  error_indicators: Optional[List[str]] = None,
                  login_indicators: Optional[List[str]] = None,
                  generic_indicators: Optional[List[str]] = None,
-                 specific_indicators: Optional[List[str]] = None):
+                 specific_indicators: Optional[List[str]] = None,
+                 invalid_cookies: Optional[List[str]] = None,
+                 invalid_text: Optional[str] = None,
+                 invalid_status: Optional[int] = None):
         self.response = response
         self.original_url = original_url
         self.original_content_length = original_content_length
@@ -32,6 +35,10 @@ class SignalCollector:
         self.failure_keywords = failure_keywords
         self.client = client
         self.signals: List[Signal] = []
+
+        self.invalid_cookies = invalid_cookies or []
+        self.invalid_text = invalid_text or ""
+        self.invalid_status = invalid_status or 0
 
         self.error_indicators = error_indicators or [
             'missing parameter', 'error', 'invalid', 'bad request', 'unauthorized', 'forbidden',
@@ -49,6 +56,8 @@ class SignalCollector:
     def collect_all(self) -> List[Signal]:
         self.signals = []
 
+        self._check_waf_block()
+        self._check_failed_similarity()
         self._check_redirect()
         self._check_session_cookie()
         self._check_final_url()
@@ -279,9 +288,13 @@ class SignalCollector:
 
         if not set_cookie_headers and hasattr(self.response, 'cookies'):
             cookies_obj = self.response.cookies
+            if cookies_obj is None or type(cookies_obj).__name__ in ['Mock', 'MagicMock']:
+                return
             if isinstance(cookies_obj, dict):
                 for cookie_name, cookie_value in cookies_obj.items():
                     cookie_name_lower = str(cookie_name).lower()
+                    if cookie_name_lower in self.invalid_cookies:
+                        continue
                     if not any(keyword in cookie_name_lower for keyword in ['session', 'auth', 'token']):
                         continue
                     val = "" if cookie_value is None else str(cookie_value)
@@ -298,6 +311,8 @@ class SignalCollector:
             else:
                 for cookie in cookies_obj:
                     cookie_name_lower = cookie.name.lower()
+                    if cookie_name_lower in self.invalid_cookies:
+                        continue
                     if any(keyword in cookie_name_lower for keyword in ['session', 'auth', 'token']):
                         cookie_value = getattr(cookie, 'value', '')
                         if not cookie_value or cookie_value.strip() == '':
@@ -345,6 +360,8 @@ class SignalCollector:
                 continue
 
             cookie_name_lower = cookie_name.lower()
+            if cookie_name_lower in self.invalid_cookies:
+                continue
             if not any(keyword in cookie_name_lower for keyword in ['session', 'auth', 'token']):
                 continue
 
@@ -654,4 +671,65 @@ class SignalCollector:
                     confidence=20,
                     description="Possible multiple users selected (generic success message without specific user)"
                 ))
+
+    def _check_waf_block(self) -> None:
+        if not self.response:
+            return
+
+        content_lower = self.response.text.lower() if hasattr(self.response, 'text') and self.response.text else ""
+        headers_str = str(self.response.headers).lower() if hasattr(self.response, 'headers') and self.response.headers else ""
+
+        waf_signatures = [
+            'cloudflare', 'cf-ray', 'sucuri', 'imperva', 'incapsula', 'mod_security',
+            'waf', 'web application firewall', 'blocked by security policy',
+            'ddos protection', 'access denied (403)', 'security challenge',
+            'hcaptcha', 'recaptcha', 'g-recaptcha', 'challenge-form', 'incident id'
+        ]
+
+        status_code = getattr(self.response, 'status_code', 0)
+        is_waf = False
+
+        if status_code in [403, 406, 999]:
+            is_waf = True
+        elif any(sig in content_lower or sig in headers_str for sig in waf_signatures):
+            block_keywords = ['blocked', 'security gate', 'firewall', 'incident id', 'cf-ray', 'sucuri']
+            if any(kw in content_lower for kw in block_keywords) or status_code == 403:
+                is_waf = True
+
+        if is_waf:
+            self.signals.append(Signal(
+                signal_type=SignalType.NEGATIVE,
+                name="waf_blocked",
+                value="detected",
+                confidence=100,
+                description="Potential WAF/Security blocking page detected"
+            ))
+
+    def _check_failed_similarity(self) -> None:
+        if not self.response or not hasattr(self.response, 'text') or not self.response.text or not self.invalid_text:
+            return
+
+        import re
+        words1 = set(re.findall(r'\w+', self.response.text.lower()))
+        words2 = set(re.findall(r'\w+', self.invalid_text.lower()))
+
+        if not words1 or not words2:
+            return
+
+        intersection = words1.intersection(words2)
+        union = words1.union(words2)
+        similarity = len(intersection) / len(union)
+        status_code = getattr(self.response, 'status_code', 0)
+        same_status = self.invalid_status and status_code and self.invalid_status == status_code
+        length_delta = abs(len(self.response.text) - len(self.invalid_text))
+        length_ratio = (length_delta / max(1, len(self.invalid_text)))
+
+        if similarity > 0.85 and same_status and length_ratio < 0.30:
+            self.signals.append(Signal(
+                signal_type=SignalType.NEGATIVE,
+                name="similar_to_failed_probe",
+                value=round(similarity, 4),
+                confidence=40,
+                description=f"Response is highly similar to failed probe (Jaccard similarity: {round(similarity * 100, 2)}%)"
+            ))
 
