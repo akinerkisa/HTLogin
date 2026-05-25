@@ -1,7 +1,6 @@
-import pytest
 from unittest.mock import Mock
 from detection.success import LoginSuccessDetector
-from detection.signals import SignalCollector, SignalType, Signal
+from detection.signals import SignalType
 
 
 class TestFPReduction:
@@ -78,8 +77,8 @@ class TestFPReduction:
         # Now mock a response that sets the same cookie
         response = Mock()
         response.status_code = 200
-        response.headers = {"Set-Cookie": "session_id=12345; HttpOnly"}
-        response.cookies = {}
+        response.headers = {"set-cookie": "session_id=12345; HttpOnly"}
+        response.cookies = {"session_id": "12345"}
         response.text = "Welcome to dashboard!"
         response.url = "http://example.com/dashboard"
 

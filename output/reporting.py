@@ -71,8 +71,34 @@ class ReportGenerator:
                             target_report["security_context"]["rate_limited_at"] = int(status_lower.split("#")[-1])
                         except ValueError:
                             target_report["security_context"]["rate_limited_at"] = None
+                    rl_details = test_result.get("details", {}) if isinstance(test_result.get("details"), dict) else {}
+                    rl_is_vulnerable = rl_details.get("is_vulnerable")
+                    if rl_is_vulnerable is None and "vulnerability" in rl_details:
+                        rl_is_vulnerable = bool(rl_details.get("vulnerability"))
+                    if rl_is_vulnerable is None:
+                        rl_is_vulnerable = status_lower.startswith("no rate limit")
 
-                if test_result.get("status") == "Successful":
+                    if rl_is_vulnerable:
+                        vulnerability = {
+                            "type": test_name,
+                            "finding_type": "rate_limit_missing_or_weak",
+                            "severity": "Medium",
+                            "confidence": test_result.get("confidence_level", "Unknown"),
+                            "confidence_score": test_result.get("confidence_score", 0),
+                            "payload": None,
+                            "indicators": [],
+                            "manual_verification_recommended": False,
+                            "evidence": self._build_evidence(test_name, test_result),
+                            "actionability": {
+                                "auto_confidence": "medium",
+                                "manual_verification_required": False,
+                                "next_step": "Increase request volume and verify absence of blocking/challenge responses."
+                            },
+                        }
+                        target_report["vulnerabilities"].append(vulnerability)
+                        severity_counts["Medium"] = severity_counts.get("Medium", 0) + 1
+
+                if test_name != "Rate Limit Test" and test_result.get("status") == "Successful":
                     confidence_level = test_result.get("confidence_level", "Unknown")
                     severity = self._determine_severity(confidence_level)
                     finding_type = self._map_finding_type(test_name)

@@ -1239,7 +1239,6 @@ class LoginScanner:
 
         user_field = username_field or 'email'
         pass_field = password_field or 'password'
-        safe_user = "htlogin_nosql_user"
         safe_pass = "htlogin_nosql_pass"
 
         # WSTG-aligned split: syntax injection first, then operator injection.
