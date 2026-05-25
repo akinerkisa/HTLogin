@@ -116,12 +116,14 @@ http://127.0.0.1:5000/lp/rate-limit-login
 - Proxy support for requests
 - HTTP method selection (GET or POST)
 - Multiple output formats (Text, JSON, HTML)
+- Enhanced JSON reporting with `executive_summary`, `security_context`, `finding_type`, `evidence`, and `actionability`
 - Organized log files by domain
 - Automatic login page discovery
 - Confidence-based success detection system
 - Configurable confidence thresholds
 - Retry mechanism with exponential backoff
 - CSRF token detection and handling
+- WSTG-aligned NoSQL API testing phases (`syntax_injection` and `operator_injection`)
   
 ## How HTLogin Extracts Successful Login Attempts
 
@@ -443,6 +445,13 @@ HTLogin supports multiple output formats:
 - **Text** (default): Human-readable plain text format
 - **JSON**: Structured JSON format for programmatic processing
 - **HTML**: Beautiful HTML report with styling
+
+### JSON Schema Highlights
+
+JSON output includes:
+- Top-level `executive_summary` (total targets, duration, requests, findings by severity)
+- Per-target `security_context` (initial block, rate-limit position, WAF/CAPTCHA signals)
+- Per-finding `finding_type`, `evidence`, and `actionability`
 
 Example:
 ```bash

@@ -36,9 +36,14 @@ class UsernameEnumerationTester:
         'invalid password', 'incorrect password', 'wrong password',
         'password incorrect', 'password does not match', 'bad password'
     ]
+    LIKELY_VALID_USERNAMES = ['admin', 'administrator', 'testuser', 'user', 'secure_user']
 
     def __init__(self, client: HTTPClient):
         self.client = client
+
+    def _normalize_text(self, text: str) -> str:
+        import re
+        return re.sub(r'\s+', ' ', (text or '').strip().lower())
 
     def test(self, form_data: FormData, url: str,
              test_usernames: List[str],
@@ -81,6 +86,8 @@ class UsernameEnumerationTester:
 
         vulnerable_username = None
         enumeration_details = {}
+        invalid_user_response_text = None
+        invalid_user_status_code = None
 
         for username in test_usernames[:5]:
             test_password = "test_password_123"
@@ -126,6 +133,10 @@ class UsernameEnumerationTester:
                     indicator in response_text_lower
                     for indicator in password_invalid_keywords
                 )
+
+                if invalid_user_response_text is None and username_not_found:
+                    invalid_user_response_text = response_text_lower
+                    invalid_user_status_code = response.status_code if hasattr(response, 'status_code') else None
 
                 if username_not_found and not password_invalid:
                     if any(p in response_text_lower for p in self.UNIFIED_LOGIN_ERROR_PHRASES):
@@ -190,6 +201,8 @@ class UsernameEnumerationTester:
 
         vulnerable_username = None
         enumeration_details: Dict = {}
+        invalid_user_response_text = None
+        invalid_user_status_code = None
 
         for username in test_usernames[:5]:
             test_password = "test_password_123"
@@ -225,6 +238,10 @@ class UsernameEnumerationTester:
                     indicator in response_text_lower for indicator in password_invalid_keywords
                 )
 
+                if invalid_user_response_text is None and username_not_found:
+                    invalid_user_response_text = response_text_lower
+                    invalid_user_status_code = response.status_code if hasattr(response, 'status_code') else None
+
                 if username_not_found and not password_invalid:
                     if any(p in response_text_lower for p in self.UNIFIED_LOGIN_ERROR_PHRASES):
                         continue
@@ -259,3 +276,83 @@ class UsernameEnumerationTester:
 
         logger.info("No username enumeration vulnerability detected")
         return False, None, None
+        if not vulnerable_username and invalid_user_response_text:
+            for candidate_username in self.LIKELY_VALID_USERNAMES:
+                candidate_payload = {
+                    username_field: candidate_username,
+                    password_field: "wrong_password_987654321"
+                }
+                if form_data.csrf_input:
+                    csrf_name = form_data.csrf_input.get('name')
+                    csrf_value = form_data.csrf_input.get('value')
+                    if csrf_name and csrf_value:
+                        candidate_payload[csrf_name] = csrf_value
+                for other_input in form_data.other_inputs:
+                    other_name = other_input.get('name')
+                    other_value = other_input.get('value')
+                    if other_name:
+                        candidate_payload[other_name] = '' if other_value is None else other_value
+                try:
+                    if http_method == "POST":
+                        candidate_response = self.client.post(form_data.action, data=candidate_payload, allow_redirects=False)
+                    else:
+                        candidate_response = self.client.get(form_data.action, params=candidate_payload, allow_redirects=False)
+                    if not candidate_response or not getattr(candidate_response, "text", None):
+                        continue
+
+                    candidate_text = self._normalize_text(candidate_response.text)
+                    baseline_text = self._normalize_text(invalid_user_response_text)
+                    status_code = getattr(candidate_response, "status_code", None)
+                    has_password_invalid = any(ind in candidate_text for ind in password_invalid_keywords)
+                    has_username_not_found = any(ind in candidate_text for ind in username_not_found_keywords)
+                    text_diff = candidate_text != baseline_text
+                    status_diff = status_code != invalid_user_status_code
+                    if has_password_invalid and not has_username_not_found and (text_diff or status_diff):
+                        vulnerable_username = candidate_username
+                        enumeration_details = {
+                            "vulnerable": True,
+                            "test_username": candidate_username,
+                            "response_text": candidate_response.text[:200],
+                            "status_code": status_code if status_code is not None else 0,
+                            "detection_method": "differential_invalid_user_vs_invalid_password"
+                        }
+                        logger.warning("⚠ Username enumeration vulnerability detected via differential error responses.")
+                        break
+                except Exception as e:
+                    logger.debug(f"Error during differential enumeration check with {candidate_username}: {e}")
+
+        if not vulnerable_username and invalid_user_response_text:
+            for candidate_username in self.LIKELY_VALID_USERNAMES:
+                body = {username_field: candidate_username, password_field: "wrong_password_987654321"}
+                try:
+                    if post_json:
+                        candidate_response = post_json(endpoint, body)
+                    else:
+                        candidate_response = self.client.post(
+                            endpoint,
+                            data=json.dumps(body),
+                            headers={"Content-Type": "application/json"},
+                            allow_redirects=False,
+                        )
+                    if not candidate_response or not getattr(candidate_response, "text", None):
+                        continue
+                    candidate_text = self._normalize_text(candidate_response.text)
+                    baseline_text = self._normalize_text(invalid_user_response_text)
+                    status_code = getattr(candidate_response, "status_code", None)
+                    has_password_invalid = any(ind in candidate_text for ind in password_invalid_keywords)
+                    has_username_not_found = any(ind in candidate_text for ind in username_not_found_keywords)
+                    text_diff = candidate_text != baseline_text
+                    status_diff = status_code != invalid_user_status_code
+                    if has_password_invalid and not has_username_not_found and (text_diff or status_diff):
+                        vulnerable_username = candidate_username
+                        enumeration_details = {
+                            "vulnerable": True,
+                            "test_username": candidate_username,
+                            "response_text": candidate_response.text[:200],
+                            "status_code": status_code if status_code is not None else 0,
+                            "detection_method": "differential_invalid_user_vs_invalid_password"
+                        }
+                        logger.warning("⚠ Username enumeration vulnerability detected via differential API responses.")
+                        break
+                except Exception as e:
+                    logger.debug(f"Error during differential API enumeration check with {candidate_username}: {e}")

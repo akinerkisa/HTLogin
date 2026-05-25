@@ -72,3 +72,14 @@ htmlcov/
 
 # Development logs
 devlog.md
+
+# Local research / benchmark artifacts
+benchmark_*
+juiceshop_*
+tmp_*
+renik_lp_urls.txt
+_scanner_payload_section.txt
+
+# Local working notes/scripts
+docs/
+tools/

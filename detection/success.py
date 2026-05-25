@@ -33,6 +33,14 @@ class LoginSuccessDetector:
         self.threshold_low = threshold_low
         self.threshold_medium = threshold_medium
         self.threshold_high = threshold_high
+        self.invalid_cookies = []
+        self.invalid_text = ""
+        self.invalid_status = 0
+
+    def set_invalid_probe_result(self, invalid_cookies: List[str], invalid_text: str, invalid_status: int) -> None:
+        self.invalid_cookies = invalid_cookies
+        self.invalid_text = invalid_text
+        self.invalid_status = invalid_status
 
     def detect(self, response, original_url: str, original_content_length: int,
                success_keywords: List[str], failure_keywords: List[str],
@@ -55,7 +63,10 @@ class LoginSuccessDetector:
             error_indicators=error_indicators,
             login_indicators=login_indicators,
             generic_indicators=generic_indicators,
-            specific_indicators=specific_indicators
+            specific_indicators=specific_indicators,
+            invalid_cookies=getattr(self, 'invalid_cookies', []),
+            invalid_text=getattr(self, 'invalid_text', ""),
+            invalid_status=getattr(self, 'invalid_status', 0)
         )
         signals = collector.collect_all()
 

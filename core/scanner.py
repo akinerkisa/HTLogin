@@ -66,6 +66,16 @@ class LoginScanner:
         self._csrf_cookies = {}
         self._login_page_url = None
 
+    def _get_payloads_for_api_test(self, injection_type: str) -> List[str]:
+        payloads = INJECTION_PAYLOADS.get(injection_type, [])
+        if not payloads:
+            return []
+        # Avoid destructive payloads in auth-bypass checks.
+        return [
+            p for p in payloads
+            if "drop table" not in p.lower() and "truncate" not in p.lower()
+        ]
+
     def _fetch_csrf_token(self, login_page_url: str) -> Optional[str]:
         import re
 
@@ -442,6 +452,11 @@ class LoginScanner:
                 graphql_endpoints = self.api_discovery.discover_graphql_endpoints(url)
 
                 if json_endpoints or graphql_endpoints:
+                    from urllib.parse import urlparse
+                    path_hint = (urlparse(url).path or "").lower()
+                    prefer_graphql = "graphql" in path_hint
+                    prefer_json = "json" in path_hint
+
                     logger.info(
                         f"Found {len(json_endpoints)} JSON API endpoint(s) and {len(graphql_endpoints)} "
                         f"GraphQL endpoint(s); probing login APIs (use -v on for per-endpoint logs)"
@@ -457,41 +472,43 @@ class LoginScanner:
                     success_keywords = self.language_keywords.get("success", [])
                     failure_keywords = self.language_keywords.get("failure", [])
 
-                    for endpoint in json_endpoints[:3]:
-                        success, credential, details = self.api_tester.test_json_api(
-                            endpoint, credentials_list[:5],
-                            success_keywords, failure_keywords,
-                            original_content_length,
-                            self.config.http_method,
-                            self.language_keywords,
-                            login_page_url=url,
-                            verbose=self.config.verbose,
-                        )
-                        if success:
-                            results["tests"]["JSON API Login"] = {
-                                "status": "Successful",
-                                "endpoint": endpoint,
-                                "credential": credential,
-                                "details": details
-                            }
-                            logger.info(f"✓ JSON API login successful at {endpoint}")
+                    if not prefer_graphql:
+                        for endpoint in json_endpoints[:3]:
+                            success, credential, details = self.api_tester.test_json_api(
+                                endpoint, credentials_list[:5],
+                                success_keywords, failure_keywords,
+                                original_content_length,
+                                self.config.http_method,
+                                self.language_keywords,
+                                login_page_url=url,
+                                verbose=self.config.verbose,
+                            )
+                            if success:
+                                results["tests"]["JSON API Login"] = {
+                                    "status": "Successful",
+                                    "endpoint": endpoint,
+                                    "credential": credential,
+                                    "details": details
+                                }
+                                logger.info(f"✓ JSON API login successful at {endpoint}")
 
-                    for endpoint in graphql_endpoints[:2]:
-                        success, credential, details = self.api_tester.test_graphql(
-                            endpoint, credentials_list[:3],
-                            success_keywords, failure_keywords,
-                            original_content_length,
-                            self.language_keywords,
-                            verbose=self.config.verbose,
-                        )
-                        if success:
-                            results["tests"]["GraphQL Login"] = {
-                                "status": "Successful",
-                                "endpoint": endpoint,
-                                "credential": credential,
-                                "details": details
-                            }
-                            logger.info(f"✓ GraphQL login successful at {endpoint}")
+                    if not prefer_json:
+                        for endpoint in graphql_endpoints[:2]:
+                            success, credential, details = self.api_tester.test_graphql(
+                                endpoint, credentials_list[:3],
+                                success_keywords, failure_keywords,
+                                original_content_length,
+                                self.language_keywords,
+                                verbose=self.config.verbose,
+                            )
+                            if success:
+                                results["tests"]["GraphQL Login"] = {
+                                    "status": "Successful",
+                                    "endpoint": endpoint,
+                                    "credential": credential,
+                                    "details": details
+                                }
+                                logger.info(f"✓ GraphQL login successful at {endpoint}")
 
                     if not results.get("tests"):
                         results["note"] = "API endpoints found but login tests were unsuccessful"
@@ -616,6 +633,11 @@ class LoginScanner:
                 "captcha_found": captcha_found
             }
 
+            try:
+                self._perform_invalid_login_probe(form_data, url)
+            except Exception as e:
+                logger.debug(f"Failed to perform invalid login probe: {e}")
+
             success_keywords = self.language_keywords.get("success", [])
             failure_keywords = self.language_keywords.get("failure", [])
 
@@ -654,30 +676,6 @@ class LoginScanner:
             if self.config.show_progress:
                 pbar = tqdm(total=total_tests, desc="Testing", unit="test", disable=False)
 
-            cred_success, cred_rate_limit, successful_cred, cred_details = self.credential_tester.test(
-                form_data, url, credentials_list,
-                success_keywords, failure_keywords,
-                self.config.http_method, original_content_length,
-                self.config.verbose, pbar,
-                language_keywords=self.language_keywords,
-                baseline_result=baseline_result
-            )
-
-            if cred_success:
-                results["tests"]["Default Credentials"] = {
-                    "status": "Successful",
-                    "credential": successful_cred,
-                    "confidence_score": cred_details.get("confidence_score", 0) if cred_details else 0,
-                    "confidence_level": cred_details.get("confidence_level", "Unknown") if cred_details else "Unknown",
-                    "manual_verification_recommended": cred_details.get("manual_verification_recommended", False) if cred_details else False,
-                    "details": cred_details
-                }
-            else:
-                results["tests"]["Default Credentials"] = {
-                    "status": "Failed",
-                    "rate_limited_at": cred_rate_limit
-                }
-
             if not captcha_found:
                 enum_vulnerable, enum_username, enum_details = self.user_enumeration_tester.test(
                     form_data, url,
@@ -702,6 +700,30 @@ class LoginScanner:
                     "vulnerable": None,
                     "skipped": True,
                     "reason": "CAPTCHA detected"
+                }
+
+            cred_success, cred_rate_limit, successful_cred, cred_details = self.credential_tester.test(
+                form_data, url, credentials_list,
+                success_keywords, failure_keywords,
+                self.config.http_method, original_content_length,
+                self.config.verbose, pbar,
+                language_keywords=self.language_keywords,
+                baseline_result=baseline_result
+            )
+
+            if cred_success:
+                results["tests"]["Default Credentials"] = {
+                    "status": "Successful",
+                    "credential": successful_cred,
+                    "confidence_score": cred_details.get("confidence_score", 0) if cred_details else 0,
+                    "confidence_level": cred_details.get("confidence_level", "Unknown") if cred_details else "Unknown",
+                    "manual_verification_recommended": cred_details.get("manual_verification_recommended", False) if cred_details else False,
+                    "details": cred_details
+                }
+            else:
+                results["tests"]["Default Credentials"] = {
+                    "status": "Failed",
+                    "rate_limited_at": cred_rate_limit
                 }
 
             for injection_type, payloads in INJECTION_PAYLOADS.items():
@@ -744,9 +766,11 @@ class LoginScanner:
                         password_field = form_data.password_input.get('id')
 
                     if username_field and password_field:
+                        import uuid
+                        suffix = uuid.uuid4().hex[:8]
                         rl_payload = {
-                            username_field: "htlogin_ratelimit_user",
-                            password_field: "htlogin_ratelimit_pass",
+                            username_field: f"htlogin_ratelimit_user_{suffix}",
+                            password_field: f"htlogin_ratelimit_pass_{suffix}",
                         }
 
                     rl_result = self.rate_limit_auditor.audit(
@@ -1120,20 +1144,7 @@ class LoginScanner:
     def _test_api_sql_injection(self, endpoint: str, username_field: str,
                                 password_field: str, success_keywords: list,
                                 failure_keywords: list, original_content_length: int) -> dict:
-        import json as json_lib
-
-        sql_payloads = [
-            "' OR '1'='1",
-            "' OR '1'='1' --",
-            "' OR '1'='1' /*",
-            "admin'--",
-            "' OR 1=1--",
-            "\" OR \"1\"=\"1",
-            "' OR ''='",
-            "1' OR '1'='1",
-            "' UNION SELECT NULL--",
-            "'; DROP TABLE users--"
-        ]
+        sql_payloads = self._get_payloads_for_api_test("SQL Injection")
 
         result = {
             "status": "Failed",
@@ -1226,86 +1237,119 @@ class LoginScanner:
                                   failure_keywords: list, original_content_length: int) -> dict:
         import json as json_lib
 
+        user_field = username_field or 'email'
+        pass_field = password_field or 'password'
+        safe_user = "htlogin_nosql_user"
+        safe_pass = "htlogin_nosql_pass"
 
-        nosql_payloads = [
-
-            ({username_field or 'email': {"$ne": ""}, password_field or 'password': {"$ne": ""}}, "$ne operator"),
-            ({username_field or 'email': {"$gt": ""}, password_field or 'password': {"$gt": ""}}, "$gt operator"),
-            ({username_field or 'email': {"$regex": ".*"}, password_field or 'password': {"$regex": ".*"}}, "$regex operator"),
-
-            ({username_field or 'email': "admin", password_field or 'password': {"$ne": ""}}, "admin + $ne"),
-            ({username_field or 'email': {"$exists": True}, password_field or 'password': {"$exists": True}}, "$exists operator"),
-        ]
+        # WSTG-aligned split: syntax injection first, then operator injection.
+        phase_payloads = {
+            "syntax_injection": [
+                ({user_field: '{"$ne":""}', pass_field: safe_pass}, "json-string-$ne"),
+                ({user_field: '{"$regex":".*"}', pass_field: safe_pass}, "json-string-$regex"),
+                ({user_field: '{"$gt":""}', pass_field: safe_pass}, "json-string-$gt"),
+            ],
+            "operator_injection": [
+                ({user_field: {"$ne": ""}, pass_field: {"$ne": ""}}, "operator-$ne"),
+                ({user_field: {"$gt": ""}, pass_field: {"$gt": ""}}, "operator-$gt"),
+                ({user_field: {"$regex": ".*"}, pass_field: {"$regex": ".*"}}, "operator-$regex"),
+                ({user_field: "admin", pass_field: {"$ne": ""}}, "admin-plus-operator"),
+                ({user_field: {"$exists": True}, pass_field: {"$exists": True}}, "operator-$exists"),
+            ],
+        }
 
         result = {
             "status": "Failed",
             "successful_payloads": [],
             "error_disclosures": [],
             "confidence_score": 0,
-            "confidence_level": "Low"
+            "confidence_level": "Low",
+            "phase_results": {},
         }
 
         is_full_mode = self.config.scan_mode == 'full'
         _emit = logger.info if self.config.verbose else logger.debug
 
-        logger.debug(f"[NoSQL] Testing {len(nosql_payloads)} NoSQL injection payloads on {endpoint}")
+        total_payloads = sum(len(v) for v in phase_payloads.values())
+        logger.debug(f"[NoSQL] Testing {total_payloads} NoSQL injection payloads on {endpoint}")
         logger.debug(f"[NoSQL] Mode: {'full (test all)' if is_full_mode else 'quick (stop at first success)'}")
 
-        for idx, (payload_data, payload_type) in enumerate(nosql_payloads, 1):
-            try:
-                logger.debug(f"[NoSQL] [{idx}/{len(nosql_payloads)}] Testing payload: {payload_type}")
-                logger.debug(f"[NoSQL] [{idx}] Payload data: {json_lib.dumps(payload_data)}")
+        global_idx = 0
+        for phase_name, payloads in phase_payloads.items():
+            phase_success_count = 0
+            phase_error_count = 0
+            logger.debug(f"[NoSQL] Starting phase: {phase_name} ({len(payloads)} payloads)")
+            for payload_data, payload_type in payloads:
+                global_idx += 1
+                try:
+                    logger.debug(f"[NoSQL] [{global_idx}/{total_payloads}] Testing payload: {payload_type}")
+                    logger.debug(f"[NoSQL] [{global_idx}] Payload data: {json_lib.dumps(payload_data)}")
 
 
-                response = self._make_csrf_request(endpoint, payload_data, use_json=True)
+                    response = self._make_csrf_request(endpoint, payload_data, use_json=True)
 
-                if response is None:
-                    logger.debug(f"[NoSQL] [{idx}] No response received")
-                    continue
-
-                response_text = response.text.lower() if response.text else ""
-                response_preview = response.text[:200] if response.text else "(empty)"
-
-                logger.debug(f"[NoSQL] [{idx}] Status: {response.status_code}, Length: {len(response.text) if response.text else 0}")
-                logger.debug(f"[NoSQL] [{idx}] Response preview: {response_preview}")
-
-
-                if response.status_code in [200, 302]:
-                    success_indicators = ['token', 'session', 'authentication', 'success']
-                    found_success = [kw for kw in success_indicators if kw.lower() in response_text]
-                    found_failure = [kw for kw in failure_keywords if kw.lower() in response_text]
-
-                    logger.debug(f"[NoSQL] [{idx}] Success indicators found: {found_success}")
-                    logger.debug(f"[NoSQL] [{idx}] Failure indicators found: {found_failure}")
-
-                    if found_success and not found_failure:
-                        _emit(f"✓ NoSQL Injection successful with {payload_type} payload")
-                        logger.debug(f"[NoSQL] [{idx}] ✓ AUTH BYPASS DETECTED!")
-                        result["successful_payloads"].append(payload_type)
-                        result["status"] = "Successful"
-                        result["confidence_score"] = 100
-                        result["confidence_level"] = "High"
-                        if not is_full_mode:
-                            return result
+                    if response is None:
+                        logger.debug(f"[NoSQL] [{global_idx}] No response received")
                         continue
 
+                    response_text = response.text.lower() if response.text else ""
+                    response_preview = response.text[:200] if response.text else "(empty)"
 
-                mongo_errors = ['mongodb', 'mongoose', 'bson', 'objectid', '$where', '$gt', '$ne']
-                found_errors = [err for err in mongo_errors if err in response_text]
+                    logger.debug(f"[NoSQL] [{global_idx}] Status: {response.status_code}, Length: {len(response.text) if response.text else 0}")
+                    logger.debug(f"[NoSQL] [{global_idx}] Response preview: {response_preview}")
 
-                if found_errors:
-                    _emit("✓ NoSQL error disclosure detected")
-                    logger.debug(f"[NoSQL] [{idx}] ✓ ERROR DISCLOSURE: {found_errors}")
-                    result["error_disclosures"].append(payload_type)
-                    result["status"] = "Successful"
-                    result["confidence_score"] = 90
-                    result["confidence_level"] = "High"
-                    if not is_full_mode:
-                        return result
 
-            except Exception as e:
-                logger.debug(f"Error testing NoSQL injection: {e}")
-                continue
+                    if response.status_code in [200, 302]:
+                        success_indicators = ['token', 'session', 'authentication', 'success']
+                        found_success = [kw for kw in success_indicators if kw.lower() in response_text]
+                        found_failure = [kw for kw in failure_keywords if kw.lower() in response_text]
+
+                        logger.debug(f"[NoSQL] [{global_idx}] Success indicators found: {found_success}")
+                        logger.debug(f"[NoSQL] [{global_idx}] Failure indicators found: {found_failure}")
+
+                        if found_success and not found_failure:
+                            _emit(f"✓ NoSQL Injection successful with {payload_type} payload")
+                            logger.debug(f"[NoSQL] [{global_idx}] ✓ AUTH BYPASS DETECTED!")
+                            result["successful_payloads"].append(f"{phase_name}:{payload_type}")
+                            result["status"] = "Successful"
+                            result["confidence_score"] = 100
+                            result["confidence_level"] = "High"
+                            phase_success_count += 1
+                            if not is_full_mode:
+                                result["phase_results"][phase_name] = {
+                                    "successes": phase_success_count,
+                                    "error_disclosures": phase_error_count,
+                                }
+                                return result
+                            continue
+
+
+                    mongo_errors = ['mongodb', 'mongoose', 'bson', 'objectid', '$where', '$gt', '$ne']
+                    found_errors = [err for err in mongo_errors if err in response_text]
+
+                    if found_errors:
+                        _emit("✓ NoSQL error disclosure detected")
+                        logger.debug(f"[NoSQL] [{global_idx}] ✓ ERROR DISCLOSURE: {found_errors}")
+                        result["error_disclosures"].append(f"{phase_name}:{payload_type}")
+                        result["status"] = "Successful"
+                        result["confidence_score"] = 90
+                        result["confidence_level"] = "High"
+                        phase_error_count += 1
+                        if not is_full_mode:
+                            result["phase_results"][phase_name] = {
+                                "successes": phase_success_count,
+                                "error_disclosures": phase_error_count,
+                            }
+                            return result
+
+                except Exception as e:
+                    logger.debug(f"Error testing NoSQL injection ({phase_name}/{payload_type}): {e}")
+                    continue
+
+            result["phase_results"][phase_name] = {
+                "successes": phase_success_count,
+                "error_disclosures": phase_error_count,
+            }
 
         if result["successful_payloads"] or result["error_disclosures"]:
             total_found = len(result["successful_payloads"]) + len(result["error_disclosures"])
@@ -1320,20 +1364,9 @@ class LoginScanner:
     def _test_api_ldap_injection(self, endpoint: str, username_field: str,
                                  password_field: str, success_keywords: list,
                                  failure_keywords: list) -> dict:
-        import json as json_lib
-
-
         ldap_payloads = [
-            ("*", "wildcard"),
-            ("*)(&", "filter break"),
-            ("*)(uid=*))(|(uid=*", "filter injection"),
-            ("admin)(&)", "admin filter close"),
-            ("admin)(|(password=*)", "password disclosure"),
-            ("*)(objectClass=*", "object class enum"),
-            ("x])(|(cn=", "bracket injection"),
-            ("*))%00", "null byte"),
-            ("admin)(|(uid=*", "OR injection"),
-            ("))(cn=*", "filter manipulation"),
+            (payload, f"payload_{i + 1}")
+            for i, payload in enumerate(self._get_payloads_for_api_test("LDAP Injection"))
         ]
 
         result = {
@@ -1430,21 +1463,7 @@ class LoginScanner:
     def _test_api_xpath_injection(self, endpoint: str, username_field: str,
                                   password_field: str, success_keywords: list,
                                   failure_keywords: list, original_content_length: int) -> dict:
-        xpath_payloads = [
-            "' or '1'='1",
-            "' or ''='",
-            "' or 1=1 or '",
-            "' or true() or '",
-            "admin' or '1'='1",
-            "' or count(/*)=1 or '",
-            "' or string-length(name(/*[1]))>0 or '",
-            "' or contains(name(/*[1]),'a') or '",
-            "' or substring('admin',1,1)='a' or '",
-            "' or position()=1 or '",
-            "' or starts-with(name(/*[1]),'r') or '",
-            "admin' or '1'='2",
-            "' or /* or '"
-        ]
+        xpath_payloads = self._get_payloads_for_api_test("XPath Injection")
 
         result = {
             "status": "Failed",
@@ -1606,7 +1625,6 @@ class LoginScanner:
             result["confidence_score"] = 70
             result["confidence_level"] = "Medium"
             logger.debug(f"[RATE] ✗ No rate limiting detected after {num_requests} requests - VULNERABILITY")
-
         if response_times:
             avg_time = sum(response_times) / len(response_times)
             min_time = min(response_times)
@@ -1618,3 +1636,75 @@ class LoginScanner:
             logger.debug(f"[RATE] Response times - Avg: {avg_time:.3f}s, Min: {min_time:.3f}s, Max: {max_time:.3f}s")
 
         return result
+
+    def _perform_invalid_login_probe(self, form_data: FormData, url: str) -> None:
+        import uuid
+        username_field = form_data.username_input.get('name') or form_data.username_input.get('id')
+        password_field = form_data.password_input.get('name') or form_data.password_input.get('id')
+
+        if not username_field or not password_field:
+            return
+
+        random_suffix = uuid.uuid4().hex[:8]
+        probe_user = f"htlogin_failed_probe_user_{random_suffix}@nonexistent.test"
+        probe_pass = f"htlogin_failed_probe_pass_{random_suffix}"
+
+        payload_data = {
+            username_field: probe_user,
+            password_field: probe_pass
+        }
+
+        if form_data.csrf_input:
+            csrf_name = form_data.csrf_input.get('name')
+            csrf_value = form_data.csrf_input.get('value')
+            if csrf_name:
+                # Avoid consuming a one-time token from the parsed form by refreshing it for probe traffic.
+                refreshed_token = self._fetch_csrf_token(url)
+                probe_csrf_value = refreshed_token or csrf_value
+                if probe_csrf_value:
+                    payload_data[csrf_name] = probe_csrf_value
+
+        for other_input in form_data.other_inputs:
+            other_name = other_input.get('name')
+            other_value = other_input.get('value')
+            if other_name:
+                payload_data[other_name] = '' if other_value is None else other_value
+
+        logger.debug(f"[PROBE] Sending failed login probe to action: {form_data.action}")
+
+        if self.config.http_method == "POST":
+            response = self.client.post(form_data.action, data=payload_data, allow_redirects=True)
+        else:
+            response = self.client.get(form_data.action, params=payload_data, allow_redirects=True)
+
+        if response is not None:
+            invalid_cookies = []
+            if hasattr(response, 'cookies') and response.cookies is not None:
+                for cookie_name in response.cookies.keys():
+                    invalid_cookies.append(str(cookie_name).lower())
+
+            if hasattr(response, 'headers') and response.headers:
+                set_cookie_headers = response.headers.get_list('Set-Cookie') if hasattr(response.headers, 'get_list') else []
+                if not set_cookie_headers and 'set-cookie' in response.headers:
+                    set_cookie_headers = [response.headers.get('set-cookie')]
+                for header in set_cookie_headers:
+                    if header and ';' in header:
+                        cookie_parts = header.split(';')
+                        if cookie_parts:
+                            name_val = cookie_parts[0].strip()
+                            if '=' in name_val:
+                                c_name = name_val.split('=', 1)[0].strip()
+                                if c_name.lower() not in invalid_cookies:
+                                    invalid_cookies.append(c_name.lower())
+
+            status_code = getattr(response, 'status_code', 0)
+            text_content = getattr(response, 'text', '') or ''
+
+            logger.debug(f"[PROBE] Invalid probe status: {status_code}, cookies found on failure: {invalid_cookies}")
+
+            self.detector.set_invalid_probe_result(
+                invalid_cookies=invalid_cookies,
+                invalid_text=text_content,
+                invalid_status=status_code
+            )
+
