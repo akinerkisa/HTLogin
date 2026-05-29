@@ -239,8 +239,6 @@ class FormParser:
         logger.debug("[FORM] No password input found with patterns")
         return None
 
-        return None
-
     def _find_csrf_token(self, form: Optional[BeautifulSoup],
                         soup: BeautifulSoup) -> Optional[BeautifulSoup]:
         search_area = form if form else soup
