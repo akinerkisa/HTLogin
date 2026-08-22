@@ -37,6 +37,8 @@ class Config:
     user_agent: Optional[str] = None
     scan_mode: str = 'quick'
     verify_ssl: bool = True
+    safe_mode: bool = False
+    max_requests_per_target: int = 200
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> 'Config':
@@ -46,10 +48,10 @@ class Config:
         type_validators = {
             int: ['timeout', 'max_retries', 'rate_limit_requests', 'rate_limit_threads',
                   'confidence_threshold_low', 'confidence_threshold_medium', 'confidence_threshold_high',
-                  'selenium_wait_time'],
+                  'selenium_wait_time', 'max_requests_per_target'],
             float: ['rate_limit_adaptive_delay'],
             bool: ['show_progress', 'verbose', 'discovery_enabled', 'discovery_verify_pages',
-                   'nosql_progressive_mode', 'use_selenium', 'selenium_headless', 'verify_ssl'],
+                   'nosql_progressive_mode', 'use_selenium', 'selenium_headless', 'verify_ssl', 'safe_mode'],
             str: ['http_method', 'language', 'output_format', 'scan_mode'],
             list: ['nosql_admin_patterns'],
         }

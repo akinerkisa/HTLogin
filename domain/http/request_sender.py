@@ -1,4 +1,5 @@
 from typing import Optional, Dict, Any
+from threading import Lock
 from requests import Response, Session
 from requests.exceptions import SSLError, ConnectionError, Timeout, RequestException, HTTPError
 
@@ -8,11 +9,29 @@ from utils.logging import get_logger
 logger = get_logger()
 
 
+class RequestBudgetExceeded(Exception):
+    """Raised internally when the per-target network request budget is spent."""
+
+
 class RequestSender:
-    def __init__(self, session: Session, retry_policy: RetryPolicy, verify_ssl: bool = True):
+    def __init__(self, session: Session, retry_policy: RetryPolicy, verify_ssl: bool = True,
+                 max_requests: int = 0):
         self.session = session
         self.retry_policy = retry_policy
         self.verify_ssl = verify_ssl
+        self.max_requests = max(0, max_requests)
+        self.request_count = 0
+        self._budget_lock = Lock()
+
+    def _reserve_request(self) -> bool:
+        if self.max_requests == 0:
+            return True
+        with self._budget_lock:
+            if self.request_count >= self.max_requests:
+                logger.warning("Request budget exhausted (%s requests); stopping further requests.", self.max_requests)
+                return False
+            self.request_count += 1
+            return True
 
     def _ensure_decompressed(self, response: Response) -> Response:
         if not response or not hasattr(response, 'text'):
@@ -78,6 +97,8 @@ class RequestSender:
                     timeout: Optional[int] = None,
                     **kwargs) -> Optional[Response]:
         def make_request() -> Response:
+            if not self._reserve_request():
+                raise RequestBudgetExceeded
             response = self.session.request(
                 method.upper(),
                 url,
@@ -95,6 +116,8 @@ class RequestSender:
                 if is_cloudflare:
                     logger.warning(f"Cloudflare protection detected (403) for {url}. Continuing with limited testing.")
             return response
+        except RequestBudgetExceeded:
+            return None
         except HTTPError as e:
             if hasattr(e, 'response') and e.response is not None:
                 response = e.response

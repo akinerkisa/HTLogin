@@ -31,5 +31,7 @@
   "use_selenium": false,
   "selenium_headless": true,
   "selenium_wait_time": 5,
-  "user_agent": null
+  "user_agent": null,
+  "safe_mode": false,
+  "max_requests_per_target": 200
 }

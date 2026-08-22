@@ -28,6 +28,8 @@ _FALLBACK_CONFIG = {
     'discovery_verify_pages': True,
     'nosql_progressive_mode': True,
     'nosql_admin_patterns': ['admin.*', 'administrator.*', 'root.*', '.*admin.*', 'adm.*'],
+    'safe_mode': False,
+    'max_requests_per_target': 200,
 }
 
 

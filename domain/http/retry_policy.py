@@ -56,6 +56,10 @@ class RetryPolicy:
                 logger.error(f"Request failed after {attempt + 1} attempts: {e}")
                 raise
         except Exception as e:
+            # RequestSender handles this as a normal scan stop, not a network
+            # failure that should be retried or logged as an error.
+            if e.__class__.__name__ == "RequestBudgetExceeded":
+                raise
             if self.should_retry(e, attempt):
                 delay = self.get_backoff_delay(attempt)
                 logger.warning(

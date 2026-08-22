@@ -1,5 +1,84 @@
-# HowToLogin (HTLogin) v1.1.1
-HowToLogin is a tool that tests web application login pages for login bypass. HTLogin tests for various login bypass payloads, common default credentials and rate limits on the login forms in the given url and presents it to the user.
+# HowToLogin (HTLogin)
+
+> Authorized login security testing for web applications.
+
+HTLogin inspects login forms and authentication APIs, then tests for common
+authentication weaknesses such as default credentials, injection-based login
+bypass, username enumeration, CAPTCHA handling gaps, and missing rate limits.
+It supports traditional HTML forms, JSON/GraphQL APIs, and JavaScript-rendered
+SPAs.
+
+Only use HTLogin against systems you own or are explicitly authorized to test.
+Active scans send authentication and security-test requests to the target.
+
+## Why HTLogin?
+
+- One CLI for HTML forms, API login endpoints, and SPA discovery
+- Confidence-based detection with evidence in JSON and HTML reports
+- Quick and full scan modes
+- Built-in request budget and passive safe mode
+- Proxy, Selenium, Burp Suite, multi-language, and batch URL support
+
+## Quick start
+
+```bash
+git clone https://github.com/akinerkisa/HTLogin.git
+cd HTLogin
+python -m pip install -r requirements.txt
+
+# Passive inspection: no credentials, injection, enumeration, or rate-limit probes
+python main.py -u https://example.com/login --safe-mode
+
+# Authorized active scan with a per-target request ceiling
+python main.py -u https://example.com/login --max-requests 200 -o report.json -of json
+```
+
+For development:
+
+```bash
+python -m pip install -r requirements-dev.txt
+pytest
+pytest --cov=. --cov-report=term-missing
+ruff check .
+python -m build
+```
+
+`--max-requests 0` disables the main HTTP client's request budget. The rate
+limit audit has its own `--rate-limit`/configuration limit. `--insecure` should
+only be used for authorized environments with intentionally untrusted TLS.
+
+## Current scope
+
+| Area | Support |
+| --- | --- |
+| HTML login forms | Static parsing and CSRF/CAPTCHA detection |
+| SPA applications | Optional Selenium rendering and API discovery |
+| APIs | JSON and GraphQL login endpoint discovery/testing |
+| Authentication checks | Default credentials, SQL/NoSQL/XPath/LDAP payloads |
+| Modern auth detection | Passive MFA/2FA, OAuth/OIDC, SAML, and external IdP hints |
+| Abuse controls | Username enumeration and rate-limit auditing |
+| Reports | Text, JSON, and HTML |
+| Integrations | HTTP proxy and Burp Suite extension |
+
+## Safe operation
+
+Use `--safe-mode` when you only need passive form and page inspection. Active
+testing should be run inside an approved scope, preferably with a dedicated
+test account and a conservative `--max-requests` value. HTLogin detects but
+does not solve MFA, OAuth/OIDC, or CAPTCHA challenges and may require manual verification for high-impact
+findings.
+
+## Reporting and confidence
+
+Reports include the target, test status, confidence score/level, request
+context, evidence, and recommended manual verification. A positive result is
+not a substitute for reproducing the behavior in the target environment;
+redirects, cookies, and response text can produce false positives on custom
+login flows.
+
+See [SECURITY.md](SECURITY.md) for vulnerability reporting and safe-use
+guidance, [CONTRIBUTING.md](CONTRIBUTING.md) for development, and
+[CHANGELOG.md](CHANGELOG.md) for unreleased changes.
 
 ## Quick Start And Usage
 

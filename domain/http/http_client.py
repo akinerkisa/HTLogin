@@ -9,7 +9,7 @@ from domain.http.session_manager import SessionManager
 
 
 class HTTPClient:
-    def __init__(self, timeout: int = 10, max_retries: int = 2, proxy: Optional[str] = None, use_cloudscraper: bool = False, user_agent: Optional[str] = None, verify_ssl: bool = True):
+    def __init__(self, timeout: int = 10, max_retries: int = 2, proxy: Optional[str] = None, use_cloudscraper: bool = False, user_agent: Optional[str] = None, verify_ssl: bool = True, max_requests: int = 0):
         self.timeout = timeout
         self.max_retries = max_retries
         self.use_cloudscraper = use_cloudscraper
@@ -23,7 +23,7 @@ class HTTPClient:
         self.session_manager = SessionManager(timeout=timeout, proxy=proxy, use_cloudscraper=use_cloudscraper, user_agent=user_agent, verify_ssl=verify_ssl)
         self.retry_policy = RetryPolicy(max_retries=max_retries)
         self.session = self.session_manager.create_session(max_retries=max_retries)
-        self.request_sender = RequestSender(self.session, self.retry_policy, verify_ssl=verify_ssl)
+        self.request_sender = RequestSender(self.session, self.retry_policy, verify_ssl=verify_ssl, max_requests=max_requests)
         self.response_evaluator = ResponseEvaluator()
         self._cloudscraper_session = None
 
@@ -54,7 +54,9 @@ class HTTPClient:
                 scraper.headers.update(browser_headers)
 
                 self._cloudscraper_session = scraper
-                self.request_sender = RequestSender(self._cloudscraper_session, self.retry_policy)
+                previous_count = self.request_sender.request_count
+                self.request_sender = RequestSender(self._cloudscraper_session, self.retry_policy, verify_ssl=self.verify_ssl, max_requests=self.request_sender.max_requests)
+                self.request_sender.request_count = previous_count
                 self.session = self._cloudscraper_session
                 return True
             except ImportError:

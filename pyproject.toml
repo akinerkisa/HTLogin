@@ -1,0 +1,53 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "htlogin"
+version = "1.1.1"
+description = "Authorized login security testing for web applications"
+readme = "README.md"
+requires-python = ">=3.9"
+license = "MIT"
+authors = [{name = "akinerkisa"}]
+keywords = ["authentication", "cybersecurity", "dast", "login", "security-testing"]
+classifiers = [
+  "Development Status :: 5 - Production/Stable",
+  "Intended Audience :: Information Technology",
+  "Topic :: Security",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3 :: Only",
+  "Programming Language :: Python :: 3.9",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.13",
+]
+dependencies = [
+  "beautifulsoup4>=4.9,<5",
+  "requests>=2.25,<3",
+  "urllib3>=1.26,<3",
+  "brotli>=1.0,<2",
+  "tqdm>=4.60,<5",
+  "cloudscraper>=1.2.71,<2",
+  "selenium>=4.15,<5",
+]
+
+[project.scripts]
+htlogin = "main:main"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+addopts = ["-v", "--strict-markers", "--tb=short"]
+markers = [
+  "unit: Unit tests",
+  "integration: Integration tests",
+  "slow: Slow running tests",
+]
+
+[tool.ruff]
+line-length = 120
+exclude = [".git", ".pytest_cache", "__pycache__", "build", "dist"]
+[tool.ruff.lint]
+select = ["E9", "F63", "F7", "F82"]

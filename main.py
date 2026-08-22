@@ -14,6 +14,20 @@ from core.runner import ScanRunner
 from output.reporting import ReportGenerator, save_output
 from output.cli import CLIOutput
 
+
+def _configure_console_encoding() -> None:
+    """Keep CLI output usable on Windows consoles with a legacy code page."""
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure:
+            try:
+                reconfigure(encoding="utf-8", errors="replace")
+            except (OSError, ValueError):
+                pass
+
+
+_configure_console_encoding()
+
 if not sys.stdout.isatty():
     Colors.disable()
 
@@ -55,6 +69,10 @@ def parse_arguments() -> argparse.Namespace:
                        help="Scan mode: quick (stop at first success) or full (test all payloads)")
     parser.add_argument("-k", "--insecure", action="store_true",
                        help="Allow insecure SSL connections (skip certificate verification)")
+    parser.add_argument("--safe-mode", action="store_true",
+                       help="Passive mode: inspect forms and endpoints without sending login/payload tests")
+    parser.add_argument("--max-requests", type=int, default=DEFAULT_CONFIG.get('max_requests_per_target', 200),
+                       help="Maximum HTTP requests per target (default: 200; 0 disables the budget)")
 
     return parser.parse_args()
 
@@ -67,6 +85,14 @@ def validate_arguments(args: argparse.Namespace) -> int:
 
     if not args.url and not args.list:
         CLIOutput.print_error("Either -u/--url or -l/--list is required")
+        return 1
+
+    if args.max_requests < 0:
+        CLIOutput.print_error("--max-requests must be zero or greater")
+        return 1
+
+    if args.rate_limit < 0:
+        CLIOutput.print_error("--rate-limit must be zero or greater")
         return 1
 
     return 0
@@ -91,6 +117,8 @@ def create_cli_config(args: argparse.Namespace) -> dict:
         'user_agent': args.user_agent if hasattr(args, 'user_agent') else None,
         'scan_mode': args.mode if hasattr(args, 'mode') else 'quick',
         'verify_ssl': not args.insecure if hasattr(args, 'insecure') else True,
+        'safe_mode': args.safe_mode,
+        'max_requests_per_target': args.max_requests,
     }
 
 

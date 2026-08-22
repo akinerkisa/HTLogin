@@ -32,7 +32,8 @@ class LoginScanner:
             max_retries=config.max_retries,
             proxy=config.proxy,
             user_agent=config.user_agent,
-            verify_ssl=config.verify_ssl
+            verify_ssl=config.verify_ssl,
+            max_requests=config.max_requests_per_target
         )
 
 
@@ -50,7 +51,9 @@ class LoginScanner:
         self.credential_tester = CredentialTester(self.client, self.detector)
         self.injection_tester = InjectionTester(self.client, self.detector)
         self.rate_limit_auditor = RateLimitAuditor(
-            max_requests=config.rate_limit_requests,
+            # A zero value disables the audit; the auditor itself requires a
+            # positive constructor value, so keep it inert until invoked.
+            max_requests=max(1, config.rate_limit_requests),
             concurrency=config.rate_limit_threads,
             timeout=config.timeout,
             verify_ssl=config.verify_ssl,
@@ -413,6 +416,20 @@ class LoginScanner:
             if not form_data:
                 logger.warning("Login form not found. Attempting alternative detection methods...")
 
+                if self.config.safe_mode:
+                    results["note"] = "Safe mode enabled: form discovery completed without active authentication tests."
+                    results["tests"]["Passive Inspection"] = {
+                        "status": "Completed",
+                        "details": {"form_detected": False},
+                    }
+                    results["summary"] = {
+                        "total_tests": 1,
+                        "successful": 0,
+                        "failed": 0,
+                        "total_requests": self.client.request_sender.request_count,
+                    }
+                    return results
+
                 if not self.config.use_selenium:
                     try:
                         logger.info("Form not found in static HTML. Trying Selenium to render JavaScript (SPA detection)...")
@@ -596,20 +613,6 @@ class LoginScanner:
             logger.debug(f"[DEBUG] Form action URL: {form_data.action}")
 
 
-            is_spa = self._is_spa_form(
-                form_data.action,
-                url,
-                form_data.csrf_input,
-                getattr(form_data, "action_is_implicit", False),
-            )
-            logger.debug(f"[DEBUG] SPA detection result: {is_spa}")
-            if is_spa:
-                logger.warning("SPA detected (form action points to client-side route). Attempting API discovery...")
-                spa_api_result = self._handle_spa_login(url, form_data, credential_provider, original_content_length, results, start_time)
-                if spa_api_result:
-                    return spa_api_result
-                logger.warning("API discovery failed for SPA. Falling back to form-based testing (may not work).")
-
             csrf_found = form_data.csrf_input is not None
             if csrf_found:
                 logger.info("CSRF token found")
@@ -630,8 +633,42 @@ class LoginScanner:
                 "password_field": password_field,
                 "csrf_found": csrf_found,
                 "csrf_field": form_data.csrf_input.get('name') if form_data.csrf_input else None,
-                "captcha_found": captcha_found
+                "captcha_found": captcha_found,
+                "auth_features": self._detect_auth_features(url, response.text),
             }
+
+            if self.config.safe_mode:
+                results["note"] = "Safe mode enabled: no credential, injection, enumeration, or rate-limit probes were sent."
+                results["tests"]["Passive Inspection"] = {
+                    "status": "Completed",
+                    "details": {
+                        "form_detected": True,
+                        "csrf_found": csrf_found,
+                        "captcha_found": captcha_found,
+                        "request_budget": self.config.max_requests_per_target,
+                    },
+                }
+                results["summary"] = {
+                    "total_tests": 1,
+                    "successful": 0,
+                    "failed": 0,
+                    "total_requests": self.client.request_sender.request_count,
+                }
+                return results
+
+            is_spa = self._is_spa_form(
+                form_data.action,
+                url,
+                form_data.csrf_input,
+                getattr(form_data, "action_is_implicit", False),
+            )
+            logger.debug(f"[DEBUG] SPA detection result: {is_spa}")
+            if is_spa:
+                logger.warning("SPA detected (form action points to client-side route). Attempting API discovery...")
+                spa_api_result = self._handle_spa_login(url, form_data, credential_provider, original_content_length, results, start_time)
+                if spa_api_result:
+                    return spa_api_result
+                logger.warning("API discovery failed for SPA. Falling back to form-based testing (may not work).")
 
             try:
                 self._perform_invalid_login_probe(form_data, url)
@@ -808,16 +845,7 @@ class LoginScanner:
             successful_tests = [k for k, v in results["tests"].items()
                               if v.get("status") == "Successful"]
 
-            total_requests = 1
-
-            if self.config.test_account_username and self.config.test_account_password:
-                total_requests += 1
-
-            if not captcha_found:
-                total_requests += min(5, len(self.user_enumeration_tester.USERNAME_NOT_FOUND_INDICATORS) if hasattr(self.user_enumeration_tester, 'USERNAME_NOT_FOUND_INDICATORS') else 5)
-
-            total_requests += total_payloads
-            total_requests += len(credentials_list)
+            total_requests = self.client.request_sender.request_count
 
             if self.config.rate_limit_requests > 0 and "Rate Limit Test" in results.get("tests", {}):
                 rl_details = results["tests"]["Rate Limit Test"].get("details", {})
@@ -832,6 +860,12 @@ class LoginScanner:
                 "successful_tests": successful_tests,
                 "duration_seconds": duration,
                 "total_requests": total_requests
+            }
+            results["security_context"] = {
+                "request_budget": self.config.max_requests_per_target,
+                "requests_sent_by_http_client": self.client.request_sender.request_count,
+                "ssl_verification": self.config.verify_ssl,
+                "safe_mode": self.config.safe_mode,
             }
 
             return results
@@ -848,6 +882,26 @@ class LoginScanner:
             logger.error(f"Unexpected error occurred: {e}", exc_info=True)
             results["error"] = f"Unexpected error: {str(e)}"
             return results
+
+    @staticmethod
+    def _detect_auth_features(url: str, page_text: str) -> Dict[str, Any]:
+        """Identify modern authentication hints without sending extra requests."""
+        from urllib.parse import urlparse
+
+        content = f"{url}\n{page_text}".lower()
+        return {
+            "mfa_or_2fa_detected": any(
+                marker in content for marker in ("mfa", "2fa", "two-factor", "multi-factor", "one-time password", "otp")
+            ),
+            "oauth_or_oidc_detected": any(
+                marker in content for marker in ("oauth", "openid", "openid-connect", "/authorize", "/oauth2/")
+            ),
+            "saml_detected": any(
+                marker in content for marker in ("saml", "sso", "single sign-on", "samlrequest", "samlresponse")
+            ),
+            "external_identity_provider": urlparse(url).hostname not in (None, "localhost", "127.0.0.1")
+            and any(marker in content for marker in ("auth0", "okta", "azuread", "login.microsoftonline", "accounts.google")),
+        }
 
     def _is_spa_form(
         self,

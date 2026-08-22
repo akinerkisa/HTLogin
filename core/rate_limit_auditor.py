@@ -104,7 +104,7 @@ class RateLimitAuditor:
                     detected_headers[name] = headers.get(name)
 
         def _worker(seq: int) -> Tuple[int, Optional[int]]:
-            nonlocal first_block_request, total_sent, exception_count
+            nonlocal first_block_request, total_sent, exception_count, captcha_hits, text_indicators_hits
 
             if stop_event.is_set():
                 return seq, None
