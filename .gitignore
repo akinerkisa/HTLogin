@@ -43,6 +43,7 @@ output.txt
 output.json
 output.html
 *.txt
+!requirements-dev.txt
 *.html
 
 # Config files (user-specific)
